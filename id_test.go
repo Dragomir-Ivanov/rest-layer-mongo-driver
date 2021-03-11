@@ -4,9 +4,9 @@ import (
 	"regexp"
 	"testing"
 
-	"gopkg.in/mgo.v2/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 
-	mongo "github.com/rs/rest-layer-mongo"
+	mongo "github.com/Dragomir-Ivanov/rest-layer-mongo-driver"
 )
 
 const (
@@ -18,7 +18,7 @@ func TestObjectIDValidate(t *testing.T) {
 	v := &mongo.ObjectID{}
 
 	t.Run("validObjectID", func(t *testing.T) {
-		expect := bson.ObjectIdHex(validObjectID)
+		expect, _ := primitive.ObjectIDFromHex(validObjectID)
 		id, err := v.Validate(validObjectID)
 		if expect != id {
 			t.Errorf("v.Validate(validObjectID):\n %v (expect) != %v (actual)", expect, id)
