@@ -1,6 +1,7 @@
 package mongo_test
 
 import (
+	"context"
 	"log"
 	"net/http"
 
@@ -8,9 +9,10 @@ import (
 	"github.com/rs/rest-layer/resource"
 	"github.com/rs/rest-layer/rest"
 	"github.com/rs/rest-layer/schema"
-	mgo "gopkg.in/mgo.v2"
+	mgo "go.mongodb.org/mongo-driver/mongo"
+	moptions "go.mongodb.org/mongo-driver/mongo/options"
 
-	mongo "github.com/rs/rest-layer-mongo"
+	mongo "github.com/Dragomir-Ivanov/rest-layer-mongo-driver"
 )
 
 var (
@@ -69,7 +71,7 @@ var (
 )
 
 func Example() {
-	session, err := mgo.Dial("")
+	client, err := mgo.Connect(context.TODO(), moptions.Client().ApplyURI(""))
 	if err != nil {
 		log.Fatalf("Can't connect to MongoDB: %s", err)
 	}
@@ -77,11 +79,11 @@ func Example() {
 
 	index := resource.NewIndex()
 
-	users := index.Bind("users", user, mongo.NewHandler(session, db, "users"), resource.Conf{
+	users := index.Bind("users", user, mongo.NewHandler(client, db, "users"), resource.Conf{
 		AllowedModes: resource.ReadWrite,
 	})
 
-	users.Bind("posts", "user", post, mongo.NewHandler(session, db, "posts"), resource.Conf{
+	users.Bind("posts", "user", post, mongo.NewHandler(client, db, "posts"), resource.Conf{
 		AllowedModes: resource.ReadWrite,
 	})
 

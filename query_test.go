@@ -8,7 +8,8 @@ import (
 	"github.com/rs/rest-layer/resource"
 	"github.com/rs/rest-layer/schema"
 	"github.com/rs/rest-layer/schema/query"
-	"gopkg.in/mgo.v2/bson"
+
+	"go.mongodb.org/mongo-driver/bson"
 )
 
 type UnsupportedExpression struct{}
@@ -179,25 +180,25 @@ func TestTranslatePredicateInvalid(t *testing.T) {
 }
 
 func TestGetSort(t *testing.T) {
-	var s []string
+	var s bson.M
 	s = getSort(&query.Query{Sort: query.Sort{}})
-	if expect := []string{"_id"}; !reflect.DeepEqual(expect, s) {
+	if expect := (bson.M{"_id": 1}); !reflect.DeepEqual(expect, s) {
 		t.Errorf("expected %v, got %v", expect, s)
 	}
 	s = getSort(&query.Query{Sort: query.Sort{{Name: "id"}}})
-	if expect := []string{"_id"}; !reflect.DeepEqual(expect, s) {
+	if expect := (bson.M{"_id": 1}); !reflect.DeepEqual(expect, s) {
 		t.Errorf("expected %v, got %v", expect, s)
 	}
 	s = getSort(&query.Query{Sort: query.Sort{{Name: "f"}}})
-	if expect := []string{"f"}; !reflect.DeepEqual(expect, s) {
+	if expect := (bson.M{"f": 1}); !reflect.DeepEqual(expect, s) {
 		t.Errorf("expected %v, got %v", expect, s)
 	}
 	s = getSort(&query.Query{Sort: query.Sort{{Name: "f", Reversed: true}}})
-	if expect := []string{"-f"}; !reflect.DeepEqual(expect, s) {
+	if expect := (bson.M{"f": -1}); !reflect.DeepEqual(expect, s) {
 		t.Errorf("expected %v, got %v", expect, s)
 	}
 	s = getSort(&query.Query{Sort: query.Sort{{Name: "f"}, {Name: "f", Reversed: true}}})
-	if expect := []string{"f", "-f"}; !reflect.DeepEqual(expect, s) {
+	if expect := (bson.M{"f": -1}); !reflect.DeepEqual(expect, s) {
 		t.Errorf("expected %v, got %v", expect, s)
 	}
 }

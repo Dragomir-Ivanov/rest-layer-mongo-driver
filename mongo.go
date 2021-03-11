@@ -3,14 +3,17 @@ package mongo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/rs/rest-layer/resource"
 	"github.com/rs/rest-layer/schema/query"
-	"gopkg.in/mgo.v2"
-	"gopkg.in/mgo.v2/bson"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // mongoItem is a bson representation of a resource.Item.
@@ -55,7 +58,7 @@ func newItem(i *mongoItem) *resource.Item {
 	}
 
 	if item.ETag == "" {
-		if v, ok := i.ID.(bson.ObjectId); ok {
+		if v, ok := i.ID.(primitive.ObjectID); ok {
 			item.ETag = "p-" + v.Hex()
 		} else {
 			item.ETag = "p-" + fmt.Sprint(i.ID)
@@ -65,21 +68,21 @@ func newItem(i *mongoItem) *resource.Item {
 }
 
 // Handler handles resource storage in a MongoDB collection.
-type Handler func(ctx context.Context) (*mgo.Collection, error)
+type Handler func(ctx context.Context) (*mongo.Collection, error)
 
 // NewHandler creates an new mongo handler
-func NewHandler(s *mgo.Session, db, collection string) Handler {
-	c := func() *mgo.Collection {
-		return s.DB(db).C(collection)
+func NewHandler(s *mongo.Client, db, collection string) Handler {
+	c := func() *mongo.Collection {
+		return s.Database(db).Collection(collection)
 	}
-	return func(ctx context.Context) (*mgo.Collection, error) {
+	return func(ctx context.Context) (*mongo.Collection, error) {
 		return c(), nil
 	}
 }
 
 // C returns the mongo collection managed by this storage handler
 // from a Copy() of the mgo session.
-func (m Handler) c(ctx context.Context) (*mgo.Collection, error) {
+func (m Handler) c(ctx context.Context) (*mongo.Collection, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -88,25 +91,50 @@ func (m Handler) c(ctx context.Context) (*mgo.Collection, error) {
 		return nil, err
 	}
 	// With mgo, session.Copy() pulls a connection from the connection pool
-	s := c.Database.Session.Copy()
+	// s := c.Database.Session.Copy()
 	// Ensure safe mode is enabled in order to get errors
-	s.EnsureSafe(&mgo.Safe{})
+	// s.EnsureSafe(&mgo.Safe{})
 	// Set a timeout to match the context deadline if any
-	if deadline, ok := ctx.Deadline(); ok {
-		timeout := time.Until(deadline)
-		if timeout <= 0 {
-			timeout = 0
-		}
-		s.SetSocketTimeout(timeout)
-		s.SetSyncTimeout(timeout)
-	}
-	c.Database.Session = s
+	// if deadline, ok := ctx.Deadline(); ok {
+	// 	timeout := deadline.Sub(time.Now())
+	// 	if timeout <= 0 {
+	// 		timeout = 0
+	// 	}
+	// 	s.SetSocketTimeout(timeout)
+	// 	s.SetSyncTimeout(timeout)
+	// }
+	// c.Database.Session = s
 	return c, nil
 }
 
 // close returns a mgo.Collection's session to the connection pool.
-func (m Handler) close(c *mgo.Collection) {
-	c.Database.Session.Close()
+func (m Handler) close(c *mongo.Collection) {
+	// c.Database.Session.Close()
+}
+
+func isDup(err error) bool {
+	{
+		var e mongo.WriteException
+		if errors.As(err, &e) {
+			for _, we := range e.WriteErrors {
+				if we.Code == 11000 {
+					return true
+				}
+			}
+		}
+	}
+	{
+		var e mongo.BulkWriteException
+		if errors.As(err, &e) {
+			for _, we := range e.WriteErrors {
+				if we.Code == 11000 {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
 }
 
 // Insert inserts new items in the mongo collection.
@@ -120,8 +148,8 @@ func (m Handler) Insert(ctx context.Context, items []*resource.Item) error {
 		return err
 	}
 	defer m.close(c)
-	err = c.Insert(mItems...)
-	if mgo.IsDup(err) {
+	_, err = c.InsertMany(ctx, mItems)
+	if isDup(err) {
 		// Duplicate ID key
 		err = resource.ErrConflict
 	}
@@ -147,14 +175,16 @@ func (m Handler) Update(ctx context.Context, item *resource.Item, original *reso
 	} else {
 		s["_etag"] = original.ETag
 	}
-	err = c.Update(s, mItem)
-	if err == mgo.ErrNotFound {
+	info, err := c.ReplaceOne(ctx, s, mItem)
+	if err != nil {
+		return err
+	}
+	if info.MatchedCount == 0 {
 		// Determine if the item is not found or if the item is found but etag missmatch
-		var count int
-		count, err = c.FindId(original.ID).Count()
+		info := c.FindOne(ctx, bson.M{"_id": original.ID})
 		if err != nil {
 			// The find returned an unexpected err, just forward it with no mapping
-		} else if count == 0 {
+		} else if info.Err() == mongo.ErrNoDocuments {
 			err = resource.ErrNotFound
 		} else if ctx.Err() != nil {
 			err = ctx.Err()
@@ -181,14 +211,16 @@ func (m Handler) Delete(ctx context.Context, item *resource.Item) error {
 	} else {
 		s["_etag"] = item.ETag
 	}
-	err = c.Remove(s)
-	if err == mgo.ErrNotFound {
+	info, err := c.DeleteOne(ctx, s)
+	if err != nil {
+		return err
+	}
+	if info.DeletedCount == 0 {
 		// Determine if the item is not found or if the item is found but etag missmatch
-		var count int
-		count, err = c.FindId(item.ID).Count()
+		info := c.FindOne(ctx, bson.M{"_id": item.ID})
 		if err != nil {
 			// The find returned an unexpected err, just forward it with no mapping
-		} else if count == 0 {
+		} else if info.Err() == mongo.ErrNoDocuments {
 			err = resource.ErrNotFound
 		} else if ctx.Err() != nil {
 			err = ctx.Err()
@@ -226,10 +258,16 @@ func (m Handler) Clear(ctx context.Context, q *query.Query) (int, error) {
 		// This solution does not handle the case where a query containg all
 		// IDs is larger than the maximum BSON document size in MongoDB:
 		// https://docs.mongodb.com/manual/reference/limits/#bson-documents
-		srt := getSort(q)
-		mq := applyWindow(c.Find(qry).Sort(srt...), *q.Window)
+		findOptions := options.Find()
+		findOptions.SetSort(getSort(q))
+		findOptions = applyWindow(findOptions, *q.Window)
+		findOptions.SetProjection(bson.M{"_id": 1})
+		cursor, err := c.Find(ctx, qry, findOptions)
+		if err != nil {
+			return 0, err
+		}
 
-		if ids, err := selectIDs(c, mq); err == nil {
+		if ids, err := selectIDs(ctx, c, cursor); err == nil {
 			qry = bson.M{"_id": bson.M{"$in": ids}}
 		} else {
 			return 0, err
@@ -238,14 +276,14 @@ func (m Handler) Clear(ctx context.Context, q *query.Query) (int, error) {
 
 	// We handle the potential of partial failure by returning both the number
 	// of removed items and an error, if both are present.
-	info, err := c.RemoveAll(qry)
+	info, err := c.DeleteMany(ctx, qry)
 	if err == nil {
 		err = ctx.Err()
 	}
 	if info == nil {
 		return 0, err
 	}
-	return info.Removed, err
+	return int(info.DeletedCount), err
 }
 
 // Find items from the mongo collection matching the provided query.
@@ -269,7 +307,9 @@ func (m Handler) Find(ctx context.Context, q *query.Query) (*resource.ItemList, 
 	if err != nil {
 		return nil, err
 	}
-	srt := getSort(q)
+
+	findOptions := options.Find()
+	findOptions.SetSort(getSort(q))
 
 	c, err := m.c(ctx)
 	if err != nil {
@@ -277,10 +317,9 @@ func (m Handler) Find(ctx context.Context, q *query.Query) (*resource.ItemList, 
 	}
 	defer m.close(c)
 
-	mq := c.Find(qry).Sort(srt...)
 	limit := -1
 	if q.Window != nil {
-		mq = applyWindow(mq, *q.Window)
+		findOptions = applyWindow(findOptions, *q.Window)
 		limit = q.Window.Limit
 	}
 
@@ -290,11 +329,11 @@ func (m Handler) Find(ctx context.Context, q *query.Query) (*resource.ItemList, 
 		if dur < 0 {
 			dur = 0
 		}
-		mq.SetMaxTime(dur)
+		findOptions.SetMaxTime(dur)
 	}
 
 	// Perform request
-	iter := mq.Iter()
+	cursor, err := c.Find(ctx, qry, findOptions)
 	// Total is set to -1 because we have no easy way with MongoDB to to compute
 	// this value without performing two requests.
 	list := &resource.ItemList{
@@ -303,17 +342,20 @@ func (m Handler) Find(ctx context.Context, q *query.Query) (*resource.ItemList, 
 		Items: []*resource.Item{},
 	}
 
-	var mItem mongoItem
-	for iter.Next(&mItem) {
+	for cursor.Next(ctx) {
+		var mItem mongoItem
+		if err := cursor.Decode(&mItem); err != nil {
+			return nil, err
+		}
 		// Check if context is still ok before to continue
 		if err = ctx.Err(); err != nil {
 			// TODO bench this as net/context is using mutex under the hood
-			iter.Close()
+			cursor.Close(ctx)
 			return nil, err
 		}
 		list.Items = append(list.Items, newItem(&mItem))
 	}
-	if err := iter.Close(); err != nil {
+	if err := cursor.Close(ctx); err != nil {
 		return nil, err
 	}
 	// If the number of returned elements is lower than requested limit, or no
@@ -343,14 +385,20 @@ func (m Handler) Count(ctx context.Context, query *query.Query) (int, error) {
 		return -1, err
 	}
 	defer m.close(c)
-	mq := c.Find(q)
+
+	findOptions := options.Find()
 	// Apply context deadline if any
 	if dl, ok := ctx.Deadline(); ok {
 		dur := time.Until(dl)
 		if dur < 0 {
 			dur = 0
 		}
-		mq.SetMaxTime(dur)
+		findOptions.SetMaxTime(dur)
 	}
-	return mq.Count()
+
+	cursor, err := c.Find(ctx, q, findOptions)
+	if err != nil {
+		return -1, err
+	}
+	return cursor.RemainingBatchLength(), nil
 }

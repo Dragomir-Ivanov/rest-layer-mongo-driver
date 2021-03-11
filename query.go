@@ -1,10 +1,14 @@
 package mongo
 
 import (
+	"context"
+
 	"github.com/rs/rest-layer/resource"
 	"github.com/rs/rest-layer/schema/query"
-	mgo "gopkg.in/mgo.v2"
-	"gopkg.in/mgo.v2/bson"
+
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // getField translate a schema field into a MongoDB field:
@@ -24,41 +28,44 @@ func getQuery(q *query.Query) (bson.M, error) {
 
 // getSort transform a resource.Lookup into a Mongo sort list.
 // If the sort list is empty, fallback to _id.
-func getSort(q *query.Query) []string {
+func getSort(q *query.Query) bson.M {
 	if len(q.Sort) == 0 {
-		return []string{"_id"}
+		return bson.M{"_id": 1}
 	}
-	s := make([]string, len(q.Sort))
-	for i, sort := range q.Sort {
+	s := bson.M{}
+	for _, sort := range q.Sort {
 		if sort.Reversed {
-			s[i] = "-" + getField(sort.Name)
+			s[getField(sort.Name)] = -1
 		} else {
-			s[i] = getField(sort.Name)
+			s[getField(sort.Name)] = 1
 		}
 	}
 	return s
 }
 
-func applyWindow(mq *mgo.Query, w query.Window) *mgo.Query {
+func applyWindow(fo *options.FindOptions, w query.Window) *options.FindOptions {
 	if w.Offset > 0 {
-		mq = mq.Skip(w.Offset)
+		fo = fo.SetSkip(int64(w.Offset))
 	}
 	if w.Limit > -1 {
-		mq = mq.Limit(w.Limit)
+		fo = fo.SetLimit(int64(w.Limit))
 	}
-	return mq
+	return fo
 }
 
-func selectIDs(c *mgo.Collection, mq *mgo.Query) ([]interface{}, error) {
+func selectIDs(ctx context.Context, c *mongo.Collection, cursor *mongo.Cursor) ([]interface{}, error) {
 	var ids []interface{}
 	tmp := struct {
 		ID interface{} `bson:"_id"`
 	}{}
-	it := mq.Select(bson.M{"_id": 1}).Iter()
-	for it.Next(&tmp) {
+	for cursor.Next(ctx) {
+		if err := cursor.Decode(&tmp); err != nil {
+			cursor.Close(ctx)
+			return nil, err
+		}
 		ids = append(ids, tmp.ID)
 	}
-	if err := it.Close(); err != nil {
+	if err := cursor.Close(ctx); err != nil {
 		return nil, err
 	}
 	return ids, nil

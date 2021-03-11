@@ -7,14 +7,18 @@ import (
 	"testing"
 	"time"
 
-	mongo "github.com/rs/rest-layer-mongo"
+	mongo "github.com/Dragomir-Ivanov/rest-layer-mongo-driver"
 	"github.com/rs/rest-layer/resource"
 	"github.com/rs/rest-layer/schema/query"
-	mgo "gopkg.in/mgo.v2"
+
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/bsontype"
+	mgo "go.mongodb.org/mongo-driver/mongo"
+	moptions "go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // Mongo doesn't support nanoseconds
-var now = time.Now().Round(time.Millisecond)
+var now = time.Now().Round(time.Millisecond).UTC()
 
 func init() {
 	rand.Seed(now.UnixNano())
@@ -30,14 +34,19 @@ func randomName(n int) string {
 	return string(b)
 }
 
-func setupDBTest(t *testing.T) (*mgo.Session, func()) {
-	dbName := randomName(16)
+func setupDBTest(t *testing.T, dbName string) (*mgo.Client, func()) {
 	if testing.Short() {
 		t.Skip("skipping DB test in short mode.")
 	}
-	s, err := mgo.Dial("mongodb:///" + dbName)
+	reg := bson.NewRegistryBuilder().
+		RegisterTypeMapEntry(bsontype.DateTime, reflect.TypeOf(time.Time{})).
+		RegisterTypeMapEntry(bsontype.Int32, reflect.TypeOf(1)).
+		RegisterTypeMapEntry(bsontype.Array, reflect.TypeOf([]interface{}{})).
+		Build()
+	clientOptions := moptions.Client().SetRegistry(reg).ApplyURI("mongodb://localhost/")
+	s, err := mgo.Connect(context.Background(), clientOptions)
 	if err != nil {
-		t.Fatal("Unexpected error for mgo.Dial:", err)
+		t.Fatal("Unexpected error for mgo.Connect:", err)
 	}
 	return s, cleanup(s, dbName)
 }
@@ -45,19 +54,19 @@ func setupDBTest(t *testing.T) (*mgo.Session, func()) {
 // cleanup deletes a database immediately and on defer when call as:
 //
 //   defer cleanup(c, "database")()
-func cleanup(s *mgo.Session, db string) func() {
-	s.DB(db).DropDatabase()
+func cleanup(s *mgo.Client, db string) func() {
+	s.Database(db).Drop(context.Background())
 	return func() {
-		s.DB(db).DropDatabase()
+		s.Database(db).Drop(context.Background())
 	}
 }
 
 // asserts that the items in a collection matches the provided list of IDs.
-func assertCollectionIDs(t testing.TB, c *mgo.Collection, expect []string) {
+func assertCollectionIDs(t testing.TB, c *mgo.Collection, expect []interface{}) {
 	t.Helper()
 
-	var result []string
-	if err := c.Find(nil).Distinct("_id", &result); err != nil {
+	result, err := c.Distinct(context.Background(), "_id", bson.M{})
+	if err != nil {
 		t.Errorf("Unexpected error for Collection.Find: %v", err)
 	}
 	if !reflect.DeepEqual(result, expect) {
@@ -66,9 +75,10 @@ func assertCollectionIDs(t testing.TB, c *mgo.Collection, expect []string) {
 }
 
 func TestInsert(t *testing.T) {
-	s, cleanup := setupDBTest(t)
+	dbName := randomName(16)
+	s, cleanup := setupDBTest(t, dbName)
 	defer cleanup()
-	h := mongo.NewHandler(s, "", "test")
+	h := mongo.NewHandler(s, dbName, "test")
 	items := []*resource.Item{
 		{
 			ID:      "1234",
@@ -85,9 +95,14 @@ func TestInsert(t *testing.T) {
 	}
 
 	result := map[string]interface{}{}
-	if err := s.DB("").C("test").FindId("1234").One(&result); err != nil {
+	res := s.Database(dbName).Collection("test").FindOne(context.Background(), bson.M{"_id": "1234"})
+	if err := res.Err(); err != nil {
 		t.Fatal(err)
 	}
+	if err := res.Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+
 	expect := map[string]interface{}{"foo": "bar", "_id": "1234", "_etag": "etag", "_updated": now}
 	if !reflect.DeepEqual(expect, result) {
 		t.Errorf("got: %v want: %v", result, expect)
@@ -102,7 +117,7 @@ func TestInsert(t *testing.T) {
 }
 
 func TestUpdate(t *testing.T) {
-	now := time.Now().Truncate(time.Millisecond)
+	now := time.Now().Truncate(time.Millisecond).UTC()
 
 	newItem := &resource.Item{
 		ID:      "1234",
@@ -131,9 +146,10 @@ func TestUpdate(t *testing.T) {
 			},
 		}
 
-		s, cleanup := setupDBTest(t)
+		dbName := randomName(16)
+		s, cleanup := setupDBTest(t, dbName)
 		defer cleanup()
-		h := mongo.NewHandler(s, "", "test")
+		h := mongo.NewHandler(s, dbName, "test")
 
 		err := h.Update(context.Background(), newItem, oldItem)
 
@@ -155,9 +171,10 @@ func TestUpdate(t *testing.T) {
 			},
 		}
 
-		s, cleanup := setupDBTest(t)
+		dbName := randomName(16)
+		s, cleanup := setupDBTest(t, dbName)
 		defer cleanup()
-		h := mongo.NewHandler(s, "", "test")
+		h := mongo.NewHandler(s, dbName, "test")
 
 		if err := h.Insert(context.Background(), []*resource.Item{oldItem}); err != nil {
 			t.Fatal(err)
@@ -170,7 +187,11 @@ func TestUpdate(t *testing.T) {
 		t.Run("then should have updated the item", func(t *testing.T) {
 			result := map[string]interface{}{}
 
-			if err := s.DB("").C("test").FindId("1234").One(&result); err != nil {
+			res := s.Database(dbName).Collection("test").FindOne(context.Background(), bson.M{"_id": "1234"})
+			if err := res.Err(); err != nil {
+				t.Fatal(err)
+			}
+			if err := res.Decode(&result); err != nil {
 				t.Fatal(err)
 			}
 
@@ -201,12 +222,14 @@ func TestUpdate(t *testing.T) {
 			},
 		}
 
-		s, cleanup := setupDBTest(t)
+		dbName := randomName(16)
+		s, cleanup := setupDBTest(t, dbName)
 		defer cleanup()
-		h := mongo.NewHandler(s, "", "test")
+		h := mongo.NewHandler(s, dbName, "test")
 
 		// Inserting directly to the database without setting the _etag field.
-		if err := s.DB("").C("test").Insert(map[string]interface{}{"foo": "bar", "_id": "1234", "_updated": now}); err != nil {
+		_, err := s.Database(dbName).Collection("test").InsertOne(context.Background(), map[string]interface{}{"foo": "bar", "_id": "1234", "_updated": now})
+		if err != nil {
 			t.Fatal(err)
 		}
 
@@ -217,10 +240,13 @@ func TestUpdate(t *testing.T) {
 		t.Run("then should have updated the item", func(t *testing.T) {
 			result := map[string]interface{}{}
 
-			if err := s.DB("").C("test").FindId("1234").One(&result); err != nil {
+			res := s.Database(dbName).Collection("test").FindOne(context.Background(), bson.M{"_id": "1234"})
+			if err := res.Err(); err != nil {
 				t.Fatal(err)
 			}
-
+			if err := res.Decode(&result); err != nil {
+				t.Fatal(err)
+			}
 			if expect := newItemDoc; !reflect.DeepEqual(result, expect) {
 				t.Errorf("\ngot: %v\nwant: %v", result, expect)
 			}
@@ -239,9 +265,10 @@ func TestUpdate(t *testing.T) {
 }
 
 func TestDelete(t *testing.T) {
-	s, cleanup := setupDBTest(t)
+	dbName := randomName(16)
+	s, cleanup := setupDBTest(t, dbName)
 	defer cleanup()
-	h := mongo.NewHandler(s, "", "test")
+	h := mongo.NewHandler(s, dbName, "test")
 	item := &resource.Item{
 		ID:      "1234",
 		ETag:    "etag1",
@@ -278,11 +305,11 @@ func TestDelete(t *testing.T) {
 		t.Errorf("got %v want: %v", got, expect)
 	}
 
-	c := s.DB("").C("testEtag")
+	c := s.Database(dbName).Collection("testEtag")
 	// Add an item without _etag field
-	c.Insert(map[string]interface{}{"foo": "bar", "_id": "1234", "_updated": now})
-	c.Insert(map[string]interface{}{"foo": "bar", "_id": "12345", "_etag": "etag", "_updated": now})
-	h2 := mongo.NewHandler(s, "", "testEtag")
+	c.InsertOne(context.Background(), map[string]interface{}{"foo": "bar", "_id": "1234", "_updated": now})
+	c.InsertOne(context.Background(), map[string]interface{}{"foo": "bar", "_id": "12345", "_etag": "etag", "_updated": now})
+	h2 := mongo.NewHandler(s, dbName, "testEtag")
 	// A item without _etag field, is extracted with ETag in "p-[id]" format
 	originalItem := &resource.Item{
 		ID:      "1234",
@@ -313,9 +340,10 @@ func TestClear(t *testing.T) {
 		cName = "test"
 	)
 
-	s, cleanup := setupDBTest(t)
+	dbName := randomName(16)
+	s, cleanup := setupDBTest(t, dbName)
 	defer cleanup()
-	h := mongo.NewHandler(s, "", cName)
+	h := mongo.NewHandler(s, dbName, cName)
 	items := []*resource.Item{
 		{ID: "1", Payload: map[string]interface{}{"id": "1", "name": "a"}},
 		{ID: "2", Payload: map[string]interface{}{"id": "2", "name": "b"}},
@@ -337,7 +365,7 @@ func TestClear(t *testing.T) {
 	if expect := 2; deleted != expect {
 		t.Errorf("Unexpected result:\nexpect: %#v\ngot: %#v", expect, deleted)
 	}
-	assertCollectionIDs(t, s.DB("").C(cName), []string{"1", "2"})
+	assertCollectionIDs(t, s.Database(dbName).Collection(cName), []interface{}{"1", "2"})
 
 	q, err = query.New("", `{id:"2"}`, "", nil)
 	if err != nil {
@@ -350,7 +378,7 @@ func TestClear(t *testing.T) {
 	if expect := 1; deleted != expect {
 		t.Errorf("Unexpected result:\nexpect: %#v\ngot: %#v", expect, deleted)
 	}
-	assertCollectionIDs(t, s.DB("").C(cName), []string{"1"})
+	assertCollectionIDs(t, s.Database(dbName).Collection(cName), []interface{}{"1"})
 }
 func TestClearLimit(t *testing.T) {
 	const (
@@ -358,10 +386,10 @@ func TestClearLimit(t *testing.T) {
 		cName  = "test"
 	)
 
-	s, cleanup := setupDBTest(t)
+	s, cleanup := setupDBTest(t, dbName)
 	defer cleanup()
 
-	h := mongo.NewHandler(s, "", cName)
+	h := mongo.NewHandler(s, dbName, cName)
 	items := []*resource.Item{
 		{ID: "1", Payload: map[string]interface{}{"id": "1", "name": "a"}},
 		{ID: "2", Payload: map[string]interface{}{"id": "2", "name": "b"}},
@@ -383,7 +411,7 @@ func TestClearLimit(t *testing.T) {
 	if expect := 1; deleted != expect {
 		t.Errorf("Unexpected result:\nexpect: %#v\ngot: %#v", expect, deleted)
 	}
-	assertCollectionIDs(t, s.DB("").C(cName), []string{"1", "2", "3"})
+	assertCollectionIDs(t, s.Database(dbName).Collection(cName), []interface{}{"1", "2", "3"})
 }
 
 func TestClearOffset(t *testing.T) {
@@ -391,9 +419,10 @@ func TestClearOffset(t *testing.T) {
 		cName = "test"
 	)
 
-	s, cleanup := setupDBTest(t)
+	dbName := randomName(16)
+	s, cleanup := setupDBTest(t, dbName)
 	defer cleanup()
-	h := mongo.NewHandler(s, "", cName)
+	h := mongo.NewHandler(s, dbName, cName)
 	items := []*resource.Item{
 		{ID: "1", Payload: map[string]interface{}{"id": "1", "name": "a"}},
 		{ID: "2", Payload: map[string]interface{}{"id": "2", "name": "b"}},
@@ -415,7 +444,7 @@ func TestClearOffset(t *testing.T) {
 	if expect := 1; deleted != expect {
 		t.Errorf("Unexpected result:\nexpect: %#v\ngot: %#v", expect, deleted)
 	}
-	assertCollectionIDs(t, s.DB("").C(cName), []string{"1", "2", "4"})
+	assertCollectionIDs(t, s.Database(dbName).Collection(cName), []interface{}{"1", "2", "4"})
 }
 
 func TestFind(t *testing.T) {
@@ -471,9 +500,10 @@ func TestFind(t *testing.T) {
 		}
 	}
 
-	s, cleanup := setupDBTest(t)
+	dbName := randomName(16)
+	s, cleanup := setupDBTest(t, dbName)
 	defer cleanup()
-	h := mongo.NewHandler(s, "", "test")
+	h := mongo.NewHandler(s, dbName, "test")
 
 	if err := h.Insert(context.Background(), allItems); err != nil {
 		t.Fatalf("Unexpected error: %s", err)
