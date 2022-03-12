@@ -371,6 +371,7 @@ func (m Handler) Find(ctx context.Context, q *query.Query) (*resource.ItemList, 
 			list.Total = len(list.Items)
 		}
 	}
+	fmt.Println("total=", list.Total)
 	return list, err
 }
 
@@ -386,19 +387,20 @@ func (m Handler) Count(ctx context.Context, query *query.Query) (int, error) {
 	}
 	defer m.close(c)
 
-	findOptions := options.Find()
+	countOptions := options.Count()
 	// Apply context deadline if any
 	if dl, ok := ctx.Deadline(); ok {
 		dur := time.Until(dl)
 		if dur < 0 {
 			dur = 0
 		}
-		findOptions.SetMaxTime(dur)
+		countOptions.SetMaxTime(dur)
 	}
 
-	cursor, err := c.Find(ctx, q, findOptions)
+	n, err := c.CountDocuments(ctx, q, countOptions)
 	if err != nil {
 		return -1, err
 	}
-	return cursor.RemainingBatchLength(), nil
+
+	return int(n), nil
 }
