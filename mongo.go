@@ -374,7 +374,6 @@ func (m Handler) Find(ctx context.Context, q *query.Query) (*resource.ItemList, 
 			list.Total = len(list.Items)
 		}
 	}
-	fmt.Println("total=", list.Total)
 	return list, err
 }
 
