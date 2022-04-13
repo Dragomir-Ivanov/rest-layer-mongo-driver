@@ -334,6 +334,9 @@ func (m Handler) Find(ctx context.Context, q *query.Query) (*resource.ItemList, 
 
 	// Perform request
 	cursor, err := c.Find(ctx, qry, findOptions)
+	if err != nil {
+		return nil, err
+	}
 	// Total is set to -1 because we have no easy way with MongoDB to to compute
 	// this value without performing two requests.
 	list := &resource.ItemList{

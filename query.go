@@ -28,17 +28,18 @@ func getQuery(q *query.Query) (bson.M, error) {
 
 // getSort transform a resource.Lookup into a Mongo sort list.
 // If the sort list is empty, fallback to _id.
-func getSort(q *query.Query) bson.M {
+func getSort(q *query.Query) bson.D {
 	if len(q.Sort) == 0 {
-		return bson.M{"_id": 1}
+		return bson.D{{Key: "_id", Value: 1}}
 	}
-	s := bson.M{}
+	s := bson.D{}
 	for _, sort := range q.Sort {
+		value := 1
 		if sort.Reversed {
-			s[getField(sort.Name)] = -1
-		} else {
-			s[getField(sort.Name)] = 1
+			value = -1
 		}
+		e := bson.E{Key: getField(sort.Name), Value: value}
+		s = append(s, e)
 	}
 	return s
 }
