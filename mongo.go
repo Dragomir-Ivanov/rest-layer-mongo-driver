@@ -325,11 +325,7 @@ func (m Handler) Find(ctx context.Context, q *query.Query) (*resource.ItemList, 
 
 	// Apply context deadline if any
 	if dl, ok := ctx.Deadline(); ok {
-		dur := time.Until(dl)
-		if dur < 0 {
-			dur = 0
-		}
-		findOptions.SetMaxTime(dur)
+		findOptions.SetMaxTime(time.Until(dl))
 	}
 
 	// Perform request
@@ -392,11 +388,7 @@ func (m Handler) Count(ctx context.Context, query *query.Query) (int, error) {
 	countOptions := options.Count()
 	// Apply context deadline if any
 	if dl, ok := ctx.Deadline(); ok {
-		dur := time.Until(dl)
-		if dur < 0 {
-			dur = 0
-		}
-		countOptions.SetMaxTime(dur)
+		countOptions.SetMaxTime(time.Until(dl))
 	}
 
 	n, err := c.CountDocuments(ctx, q, countOptions)

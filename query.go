@@ -14,7 +14,7 @@ import (
 
 // getField translate a schema field into a MongoDB field:
 //
-//  - id -> _id with in order to tape on the mongo primary key
+//   - id -> _id with in order to tape on the mongo primary key
 func getField(f string) string {
 	if f == "id" {
 		return "_id"
@@ -33,6 +33,7 @@ func getSort(q *query.Query) bson.D {
 	if len(q.Sort) == 0 {
 		return bson.D{{Key: "_id", Value: 1}}
 	}
+
 	s := bson.D{}
 	for _, sort := range q.Sort {
 		value := 1
@@ -80,8 +81,7 @@ func translatePredicate(q query.Predicate) (bson.M, error) {
 		case *query.And:
 			s := []bson.M{}
 			for _, subExp := range *t {
-				p := expToPredicate(subExp)
-				sb, err := translatePredicate(p)
+				sb, err := translatePredicate(expToPredicate(subExp))
 				if err != nil {
 					return nil, err
 				}
@@ -91,8 +91,7 @@ func translatePredicate(q query.Predicate) (bson.M, error) {
 		case *query.Or:
 			s := []bson.M{}
 			for _, subExp := range *t {
-				p := expToPredicate(subExp)
-				sb, err := translatePredicate(p)
+				sb, err := translatePredicate(expToPredicate(subExp))
 				if err != nil {
 					return nil, err
 				}
@@ -102,8 +101,7 @@ func translatePredicate(q query.Predicate) (bson.M, error) {
 		case *query.ElemMatch:
 			s := bson.M{}
 			for _, subExp := range t.Exps {
-				p := expToPredicate(subExp)
-				sb, err := translatePredicate(p)
+				sb, err := translatePredicate(expToPredicate(subExp))
 				if err != nil {
 					return nil, err
 				}
