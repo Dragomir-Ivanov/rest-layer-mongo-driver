@@ -7,6 +7,7 @@ import (
 	"github.com/rs/rest-layer/schema/query"
 
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -133,7 +134,7 @@ func translatePredicate(q query.Predicate) (bson.M, error) {
 			b[getField(t.Field)] = bson.M{"$lte": t.Value}
 		case *query.Regex:
 			if t.Negated {
-				b[getField(t.Field)] = bson.M{"$not": bson.RegEx{Pattern: t.Value.String()}}
+				b[getField(t.Field)] = bson.M{"$not": primitive.Regex{Pattern: t.Value.String()}}
 			} else {
 				b[getField(t.Field)] = bson.M{"$regex": t.Value.String()}
 			}

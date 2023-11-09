@@ -12,7 +12,6 @@ import (
 	"github.com/rs/rest-layer/schema/query"
 
 	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/bsontype"
 	mgo "go.mongodb.org/mongo-driver/mongo"
 	moptions "go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -34,11 +33,11 @@ func setupDBTest(t *testing.T, dbName string) (*mgo.Client, func()) {
 	if testing.Short() {
 		t.Skip("skipping DB test in short mode.")
 	}
-	reg := bson.NewRegistryBuilder().
-		RegisterTypeMapEntry(bsontype.DateTime, reflect.TypeOf(time.Time{})).
-		RegisterTypeMapEntry(bsontype.Int32, reflect.TypeOf(1)).
-		RegisterTypeMapEntry(bsontype.Array, reflect.TypeOf([]interface{}{})).
-		Build()
+	reg := bson.NewRegistry()
+	reg.RegisterTypeMapEntry(bson.TypeDateTime, reflect.TypeOf(time.Time{}))
+	reg.RegisterTypeMapEntry(bson.TypeInt32, reflect.TypeOf(1))
+	reg.RegisterTypeMapEntry(bson.TypeArray, reflect.TypeOf([]interface{}{}))
+
 	clientOptions := moptions.Client().SetRegistry(reg).ApplyURI("mongodb://localhost/")
 	s, err := mgo.Connect(context.Background(), clientOptions)
 	if err != nil {
@@ -49,7 +48,7 @@ func setupDBTest(t *testing.T, dbName string) (*mgo.Client, func()) {
 
 // cleanup deletes a database immediately and on defer when call as:
 //
-//   defer cleanup(c, "database")()
+//	defer cleanup(c, "database")()
 func cleanup(s *mgo.Client, db string) func() {
 	s.Database(db).Drop(context.Background())
 	return func() {

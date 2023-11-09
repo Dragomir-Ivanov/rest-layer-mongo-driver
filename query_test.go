@@ -10,6 +10,7 @@ import (
 	"github.com/rs/rest-layer/schema/query"
 
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 type UnsupportedExpression struct{}
@@ -44,7 +45,7 @@ func TestTranslatePredicateString(t *testing.T) {
 		{`{f:{$in:["foo","bar"]}}`, bson.M{"f": bson.M{"$in": []interface{}{"foo", "bar"}}}},
 		{`{f:{$nin:["foo","bar"]}}`, bson.M{"f": bson.M{"$nin": []interface{}{"foo", "bar"}}}},
 		{`{f:{$regex:"fo[o]{1}.+is.+some"}}`, bson.M{"f": bson.M{"$regex": "fo[o]{1}.+is.+some"}}},
-		{`{f:{$not:"fo[o]{1}.+is.+some"}}`, bson.M{"f": bson.M{"$not": bson.RegEx{Pattern: "fo[o]{1}.+is.+some"}}}},
+		{`{f:{$not:"fo[o]{1}.+is.+some"}}`, bson.M{"f": bson.M{"$not": primitive.Regex{Pattern: "fo[o]{1}.+is.+some"}}}},
 		{`{$and:[{f:"foo"},{f:"bar"}]}`, bson.M{"$and": []bson.M{{"f": "foo"}, {"f": "bar"}}}},
 		{`{$or:[{f:"foo"},{f:"bar"}]}`, bson.M{"$or": []bson.M{{"f": "foo"}, {"f": "bar"}}}},
 		{`{$or:[{f:"foo"},{f:"bar",g:"baz"}]}`, bson.M{"$or": []bson.M{{"f": "foo"}, {"$and": []bson.M{{"f": "bar"}, {"g": "baz"}}}}}},
@@ -180,25 +181,25 @@ func TestTranslatePredicateInvalid(t *testing.T) {
 }
 
 func TestGetSort(t *testing.T) {
-	var s bson.M
+	var s bson.D
 	s = getSort(&query.Query{Sort: query.Sort{}})
-	if expect := (bson.M{"_id": 1}); !reflect.DeepEqual(expect, s) {
+	if expect := (bson.D{{Key: "_id", Value: 1}}); !reflect.DeepEqual(expect, s) {
 		t.Errorf("expected %v, got %v", expect, s)
 	}
 	s = getSort(&query.Query{Sort: query.Sort{{Name: "id"}}})
-	if expect := (bson.M{"_id": 1}); !reflect.DeepEqual(expect, s) {
+	if expect := (bson.D{{Key: "_id", Value: 1}}); !reflect.DeepEqual(expect, s) {
 		t.Errorf("expected %v, got %v", expect, s)
 	}
 	s = getSort(&query.Query{Sort: query.Sort{{Name: "f"}}})
-	if expect := (bson.M{"f": 1}); !reflect.DeepEqual(expect, s) {
+	if expect := (bson.D{{Key: "f", Value: 1}}); !reflect.DeepEqual(expect, s) {
 		t.Errorf("expected %v, got %v", expect, s)
 	}
 	s = getSort(&query.Query{Sort: query.Sort{{Name: "f", Reversed: true}}})
-	if expect := (bson.M{"f": -1}); !reflect.DeepEqual(expect, s) {
+	if expect := (bson.D{{Key: "f", Value: -1}}); !reflect.DeepEqual(expect, s) {
 		t.Errorf("expected %v, got %v", expect, s)
 	}
 	s = getSort(&query.Query{Sort: query.Sort{{Name: "f"}, {Name: "f", Reversed: true}}})
-	if expect := (bson.M{"f": -1}); !reflect.DeepEqual(expect, s) {
+	if expect := (bson.D{{Key: "f", Value: -1}}); !reflect.DeepEqual(expect, s) {
 		t.Errorf("expected %v, got %v", expect, s)
 	}
 }

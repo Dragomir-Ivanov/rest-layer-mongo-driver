@@ -22,11 +22,11 @@ import (
 Create a mongo master session:
 
 ```go
-  reg := bson.NewRegistryBuilder().
-    RegisterTypeMapEntry(bsontype.DateTime, reflect.TypeOf(time.Time{})).
-    RegisterTypeMapEntry(bsontype.Int32, reflect.TypeOf(1)).
-    RegisterTypeMapEntry(bsontype.Array, reflect.TypeOf([]interface{}{})).
-    Build()
+	reg := bson.NewRegistry()
+	reg.RegisterTypeMapEntry(bson.TypeDateTime, reflect.TypeOf(time.Time{}))
+	reg.RegisterTypeMapEntry(bson.TypeInt32, reflect.TypeOf(1))
+	reg.RegisterTypeMapEntry(bson.TypeArray, reflect.TypeOf([]interface{}{}))
+
   clientOptions := options.Client().SetRegistry(reg).ApplyURI("mongodb://localhost/")
   s, err := mongo.Connect(context.Background(), clientOptions)
 ```
