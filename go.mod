@@ -1,6 +1,6 @@
 module github.com/Dragomir-Ivanov/rest-layer-mongo-driver
 
-go 1.15
+go 1.20
 
 require (
 	github.com/rs/cors v1.6.0

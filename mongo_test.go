@@ -20,10 +20,6 @@ import (
 // Mongo doesn't support nanoseconds
 var now = time.Now().Round(time.Millisecond).UTC()
 
-func init() {
-	rand.Seed(now.UnixNano())
-}
-
 var letterRunes = []rune("abcdefghijklmnopqrstuvwxyz")
 
 func randomName(n int) string {
