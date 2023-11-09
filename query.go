@@ -43,6 +43,18 @@ func getSort(q *query.Query) bson.D {
 		e := bson.E{Key: getField(sort.Name), Value: value}
 		s = append(s, e)
 	}
+
+	// Deduplicate sort fields, keeping the last one, order maters
+	// https://docs.mongodb.com/manual/reference/method/cursor.sort/#sort-duplication
+	seen := map[string]bool{}
+	for i := len(s) - 1; i >= 0; i-- {
+		if seen[s[i].Key] {
+			s = append(s[:i], s[i+1:]...)
+		} else {
+			seen[s[i].Key] = true
+		}
+	}
+
 	return s
 }
 
