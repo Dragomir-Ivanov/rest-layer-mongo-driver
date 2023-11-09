@@ -310,6 +310,7 @@ func (m Handler) Find(ctx context.Context, q *query.Query) (*resource.ItemList, 
 
 	findOptions := options.Find()
 	findOptions.SetSort(getSort(q))
+	findOptions.SetProjection(getProjection(q))
 
 	c, err := m.c(ctx)
 	if err != nil {

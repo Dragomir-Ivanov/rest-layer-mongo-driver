@@ -576,10 +576,10 @@ func TestFind(t *testing.T) {
 		t.Run("then ItemList.Total should be deduced correctly", totalCheckFunc(2, l))
 
 		expectItems := []*resource.Item{
-			{ID: "3", ETag: "p-3", Payload: map[string]interface{}{"id": "3", "name": "c", "age": 2}},
-			{ID: "4", ETag: "p-4", Payload: map[string]interface{}{"id": "4", "name": "d", "age": 2}},
+			{ID: "3", ETag: "p-3", Payload: map[string]interface{}{"id": "3", "name": "c"}},
+			{ID: "4", ETag: "p-4", Payload: map[string]interface{}{"id": "4", "name": "d"}},
 		}
-		t.Run("then ItemList.Items should include all matching items and ignore projection", itemsCheckFunc(expectItems, l))
+		t.Run("then ItemList.Items should include all matching items and honor projection", itemsCheckFunc(expectItems, l))
 	})
 	t.Run("when querying for an existing ID", func(t *testing.T) {
 		l := doPositiveFindTest(t, h, &query.Query{

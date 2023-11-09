@@ -2,6 +2,7 @@ package mongo
 
 import (
 	"context"
+	"strings"
 
 	"github.com/rs/rest-layer/resource"
 	"github.com/rs/rest-layer/schema/query"
@@ -56,6 +57,40 @@ func getSort(q *query.Query) bson.D {
 	}
 
 	return s
+}
+
+func getProjection(q *query.Query) bson.M {
+	if len(q.Projection) == 0 || hasStarProjection(q) {
+		return nil
+	}
+
+	p := bson.M{}
+	p["_id"] = 1
+	p["_etag"] = 1
+	p["_updated"] = 1
+	for _, field := range q.Projection {
+		if field.Name == "id" {
+			continue
+		}
+
+		// Extract only top level field name
+		name := field.Name
+		fname := strings.Split(field.Name, ".")
+		if len(fname) > 1 {
+			name = fname[0]
+		}
+		p[getField(name)] = 1
+	}
+	return p
+}
+
+func hasStarProjection(q *query.Query) bool {
+	for _, field := range q.Projection {
+		if field.Name == "*" {
+			return true
+		}
+	}
+	return false
 }
 
 func applyWindow(fo *options.FindOptions, w query.Window) *options.FindOptions {
