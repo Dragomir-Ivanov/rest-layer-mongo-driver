@@ -377,10 +377,9 @@ func TestClear(t *testing.T) {
 }
 func TestClearLimit(t *testing.T) {
 	const (
-		dbName = "testclearlimit"
-		cName  = "test"
+		cName = "test"
 	)
-
+	dbName := randomName(16)
 	s, cleanup := setupDBTest(t, dbName)
 	defer cleanup()
 
@@ -724,6 +723,302 @@ func TestFind(t *testing.T) {
 					Predicate: tc.predicate,
 				})
 				t.Run("then ItemList.Total should be deduced correctly", totalCheckFunc(1, l))
+
+				expectItems := []*resource.Item{
+					{ID: "2", ETag: "p-2", Payload: map[string]interface{}{"id": "2", "name": "b", "age": 1}},
+				}
+				t.Run("then ItemList.Items should include the matching item", itemsCheckFunc(expectItems, l))
+			})
+		}
+	})
+}
+
+func TestReduce(t *testing.T) {
+	allItems := []*resource.Item{
+		{ID: "1", Payload: map[string]interface{}{"id": "1", "name": "a", "age": 1}},
+		{ID: "2", Payload: map[string]interface{}{"id": "2", "name": "b", "age": 1}},
+		{ID: "3", Payload: map[string]interface{}{"id": "3", "name": "c", "age": 2}},
+		{ID: "4", Payload: map[string]interface{}{"id": "4", "name": "d", "age": 2}},
+		{ID: "5", Payload: map[string]interface{}{"id": "5", "name": "rest-layer-regexp"}},
+		{ID: "6", Payload: map[string]interface{}{"id": "6", "name": "f",
+			"arr": []interface{}{
+				map[string]interface{}{"a": "foo", "b": "bar"},
+				map[string]interface{}{"a": "foo", "b": "baz"},
+			},
+		}},
+	}
+
+	doPositiveFindTest := func(t *testing.T, h mongo.Handler, q *query.Query) *resource.ItemList {
+		l := &resource.ItemList{
+			Items: []*resource.Item{},
+			Total: -1,
+		}
+		reducer := func(item *resource.Item) error {
+			l.Items = append(l.Items, item)
+			return nil
+		}
+		err := h.Reduce(context.Background(), q, reducer)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		return l
+	}
+	totalCheckFunc := func(expect int, list *resource.ItemList) func(t *testing.T) {
+		return func(t *testing.T) {
+			t.Helper()
+
+			if result := list.Total; result != expect {
+				t.Errorf("got: %d want: %d", result, expect)
+			}
+		}
+	}
+	itemsCheckLenFunc := func(expect int, list *resource.ItemList) func(t *testing.T) {
+		return func(t *testing.T) {
+			t.Helper()
+			if result := len(list.Items); result != expect {
+				t.Errorf("got: %d want: %d", result, expect)
+			}
+		}
+	}
+	itemsCheckFunc := func(expect []*resource.Item, list *resource.ItemList) func(t *testing.T) {
+		return func(t *testing.T) {
+			t.Helper()
+			if result := list.Items; !reflect.DeepEqual(result, expect) {
+				t.Errorf("\ngot: %v\nwant: %v\n", result, expect)
+			}
+		}
+	}
+
+	dbName := randomName(16)
+	s, cleanup := setupDBTest(t, dbName)
+	defer cleanup()
+	h := mongo.NewHandler(s, dbName, "test")
+
+	if err := h.Insert(context.Background(), allItems); err != nil {
+		t.Fatalf("Unexpected error: %s", err)
+	}
+
+	t.Run("when using an empty query", func(t *testing.T) {
+		l := doPositiveFindTest(t, h, &query.Query{})
+
+		t.Run("then ItemList.Total should not be deduced", totalCheckFunc(-1, l))
+		t.Run("then ItemList.Items should include all items", itemsCheckLenFunc(len(allItems), l))
+		// Do not check items content as ordering could vary.
+	})
+	t.Run("when setting limit to 0", func(t *testing.T) {
+		l := doPositiveFindTest(t, h, &query.Query{
+			Window: &query.Window{Limit: 0}},
+		)
+
+		t.Run("then ItemList.Total should not be deduced", totalCheckFunc(-1, l))
+		expectItems := []*resource.Item{}
+		t.Run("then ItemList.Items should be an empty list", itemsCheckFunc(expectItems, l))
+	})
+	t.Run("when setting limit -1 and offset to 2", func(t *testing.T) {
+		l := doPositiveFindTest(t, h, &query.Query{
+			Window: &query.Window{Limit: -1, Offset: 2},
+		})
+
+		t.Run("then ItemList.Total should not be deduced", totalCheckFunc(-1, l))
+
+		t.Run("then ItemList.Items should include all items except the first two", itemsCheckLenFunc(len(allItems)-2, l))
+		// Do not check result's content as its order is unpredictable.
+	})
+	t.Run("when setting limit -1 and offset matching the length of all items", func(t *testing.T) {
+		l := doPositiveFindTest(t, h, &query.Query{
+			Window: &query.Window{Limit: -1, Offset: len(allItems)},
+		})
+
+		// Not able to get total count in one query.
+		t.Run("then ItemList.Total should not be deduced", totalCheckFunc(-1, l))
+		// Check that we get an empty Item list and not nil.
+		expectItems := []*resource.Item{}
+		t.Run("then ItemList.Items should be an empty list", itemsCheckFunc(expectItems, l))
+	})
+
+	t.Run("when setting limit -1 and offset matching the length of all items +1", func(t *testing.T) {
+		l := doPositiveFindTest(t, h, &query.Query{
+			Window: &query.Window{Limit: -1, Offset: len(allItems)},
+		})
+
+		// Not able to get total count in one query.
+		t.Run("then ItemList.Total should not be deduced", totalCheckFunc(-1, l))
+		// Check that we get an empty Item list and not nil.
+		expectItems := []*resource.Item{}
+		t.Run("then ItemList.Items should be an empty list", itemsCheckFunc(expectItems, l))
+	})
+	t.Run("when querying for a specific field value with limit 1", func(t *testing.T) {
+		l := doPositiveFindTest(t, h, &query.Query{
+			Predicate: query.MustParsePredicate(`{name:"c"}`),
+			Window:    &query.Window{Limit: 1, Offset: 0},
+		})
+
+		// Not able to get total count in one query.
+		t.Run("then ItemList.Total should not be deduced", totalCheckFunc(-1, l))
+
+		expectItems := []*resource.Item{
+			{ID: "3", ETag: "p-3", Payload: map[string]interface{}{"id": "3", "name": "c", "age": 2}},
+		}
+		t.Run("then ItemList.Items should contain the matching item", itemsCheckFunc(expectItems, l))
+	})
+	t.Run("when querying for a field using the $in operator and limit 100 and a projection", func(t *testing.T) {
+		l := doPositiveFindTest(t, h, &query.Query{
+			Predicate:  query.MustParsePredicate(`{name:{$in:["c","d"]}}`),
+			Window:     &query.Window{Limit: 100, Offset: 0},
+			Projection: query.MustParseProjection("name"),
+		})
+		t.Run("then ItemList.Total should not be deduced", totalCheckFunc(-1, l))
+
+		expectItems := []*resource.Item{
+			{ID: "3", ETag: "p-3", Payload: map[string]interface{}{"id": "3", "name": "c"}},
+			{ID: "4", ETag: "p-4", Payload: map[string]interface{}{"id": "4", "name": "d"}},
+		}
+		t.Run("then ItemList.Items should include all matching items and honor projection", itemsCheckFunc(expectItems, l))
+	})
+	t.Run("when querying for an existing ID", func(t *testing.T) {
+		l := doPositiveFindTest(t, h, &query.Query{
+			Predicate: query.MustParsePredicate(`{id:"3"}`)},
+		)
+
+		t.Run("then ItemList.Total should not be deduced", totalCheckFunc(-1, l))
+
+		expectItems := []*resource.Item{
+			{ID: "3", ETag: "p-3", Payload: map[string]interface{}{"id": "3", "name": "c", "age": 2}},
+		}
+		t.Run("then ItemList.Items should include the matching item", itemsCheckFunc(expectItems, l))
+	})
+	t.Run("when querying using regex", func(t *testing.T) {
+		l := doPositiveFindTest(t, h, &query.Query{
+			Predicate: query.MustParsePredicate(`{name:{$regex:"^re[s]{1}t-.+yer.+exp$"}}`),
+		})
+		t.Run("then ItemList.Total should not be deduced", totalCheckFunc(-1, l))
+
+		expectItems := []*resource.Item{
+			{ID: "5", ETag: "p-5", Payload: map[string]interface{}{"id": "5", "name": "rest-layer-regexp"}},
+		}
+		t.Run("then ItemList.Items should include the matching item", itemsCheckFunc(expectItems, l))
+	})
+	t.Run("when querying using $not regex", func(t *testing.T) {
+		l := doPositiveFindTest(t, h, &query.Query{
+			Predicate: query.MustParsePredicate(`{name:{$not:"^re[s]{1}t-.+yer.+exp$"}}`),
+		})
+		t.Run("then ItemList.Total should not be deduced", totalCheckFunc(-1, l))
+
+		expectItems := []*resource.Item{
+			{ID: "1", ETag: "p-1", Payload: map[string]interface{}{"id": "1", "name": "a", "age": 1}},
+			{ID: "2", ETag: "p-2", Payload: map[string]interface{}{"id": "2", "name": "b", "age": 1}},
+			{ID: "3", ETag: "p-3", Payload: map[string]interface{}{"id": "3", "name": "c", "age": 2}},
+			{ID: "4", ETag: "p-4", Payload: map[string]interface{}{"id": "4", "name": "d", "age": 2}},
+			{ID: "6", ETag: "p-6", Payload: map[string]interface{}{"id": "6", "name": "f",
+				"arr": []interface{}{
+					map[string]interface{}{"a": "foo", "b": "bar"},
+					map[string]interface{}{"a": "foo", "b": "baz"},
+				},
+			}},
+		}
+		t.Run("then ItemList.Items should include the matching item", itemsCheckFunc(expectItems, l))
+	})
+	t.Run("when querying for a non-existant ID with limit 1", func(t *testing.T) {
+		l := doPositiveFindTest(t, h, &query.Query{
+			Predicate: query.MustParsePredicate(`{id:"10"}`),
+			Window:    &query.Window{Limit: 1, Offset: 0},
+		})
+		t.Run("then ItemList.Total should not be deduced", totalCheckFunc(-1, l))
+		t.Run("then ItemList.Items should be an empty list", itemsCheckFunc([]*resource.Item{}, l))
+	})
+	t.Run("when querying for both existing and non-existant IDs with limit 1", func(t *testing.T) {
+		l := doPositiveFindTest(t, h, &query.Query{
+			Predicate: query.MustParsePredicate(`{id:{$in:["3","4","10"]}}`),
+			Window:    &query.Window{Limit: 1, Offset: 0},
+		})
+
+		// Not able to get total count in one query.
+		t.Run("then ItemList.Total should not be deduced", totalCheckFunc(-1, l))
+
+		expectItems := []*resource.Item{
+			{ID: "3", ETag: "p-3", Payload: map[string]interface{}{"id": "3", "name": "c", "age": 2}},
+		}
+		t.Run("then ItemList.Items should include the first matching item", itemsCheckFunc(expectItems, l))
+	})
+	t.Run("when querying for both existing and non-existant IDs", func(t *testing.T) {
+		l := doPositiveFindTest(t, h, &query.Query{
+			Predicate: query.MustParsePredicate(`{id:{$in:["3","4","10"]}}`),
+		})
+
+		t.Run("then ItemList.Total should not be deduced", totalCheckFunc(-1, l))
+
+		expectItems := []*resource.Item{
+			{ID: "3", ETag: "p-3", Payload: map[string]interface{}{"id": "3", "name": "c", "age": 2}},
+			{ID: "4", ETag: "p-4", Payload: map[string]interface{}{"id": "4", "name": "d", "age": 2}},
+		}
+		t.Run("then ItemList.Items should include all matching items", itemsCheckFunc(expectItems, l))
+	})
+	t.Run("when quering for array of objects match", func(t *testing.T) {
+		l := doPositiveFindTest(t, h, &query.Query{
+			Predicate: query.MustParsePredicate(`{arr:{$elemMatch:{a:"foo"}}}`),
+		})
+
+		t.Run("then ItemList.Total should not be deduced", totalCheckFunc(-1, l))
+
+		expectItems := []*resource.Item{
+			{ID: "6", ETag: "p-6", Payload: map[string]interface{}{"id": "6", "name": "f",
+				"arr": []interface{}{
+					map[string]interface{}{"a": "foo", "b": "bar"},
+					map[string]interface{}{"a": "foo", "b": "baz"},
+				},
+			}},
+		}
+		t.Run("then ItemList.Items should include the first matching item", itemsCheckFunc(expectItems, l))
+	})
+	t.Run("when quering with equivalent $and queries", func(t *testing.T) {
+		equivalents := []struct {
+			name      string
+			predicate query.Predicate
+		}{
+			{
+				name: "implicit and predicate",
+				predicate: query.Predicate{
+					&query.Equal{Field: "age", Value: 1},
+					&query.Equal{Field: "name", Value: "b"},
+				},
+			},
+			{
+				name: "explicit $and",
+				predicate: query.Predicate{
+					&query.And{
+						&query.Equal{Field: "age", Value: 1},
+						&query.Equal{Field: "name", Value: "b"},
+					},
+				},
+			},
+			{
+				name: "explicit &or of implicit and predicate",
+				predicate: query.Predicate{
+					&query.Or{
+						query.Predicate{
+							&query.Equal{Field: "age", Value: 1},
+							&query.Equal{Field: "name", Value: "b"},
+						},
+					},
+				},
+			},
+			{
+				name: "explicit $and of predicates",
+				predicate: query.Predicate{
+					&query.And{
+						query.Predicate{&query.Equal{Field: "age", Value: 1}},
+						query.Predicate{&query.Equal{Field: "name", Value: "b"}},
+					},
+				},
+			},
+		}
+		for _, tc := range equivalents {
+			t.Run(tc.name, func(t *testing.T) {
+				l := doPositiveFindTest(t, h, &query.Query{
+					Predicate: tc.predicate,
+				})
+				t.Run("then ItemList.Total should not be deduced", totalCheckFunc(-1, l))
 
 				expectItems := []*resource.Item{
 					{ID: "2", ETag: "p-2", Payload: map[string]interface{}{"id": "2", "name": "b", "age": 1}},

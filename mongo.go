@@ -374,6 +374,63 @@ func (m Handler) Find(ctx context.Context, q *query.Query) (*resource.ItemList, 
 	return list, err
 }
 
+func (m Handler) Reduce(ctx context.Context, q *query.Query, reducer func(item *resource.Item) error) error {
+	// MongoDB will return all records on Limit=0. Workaround that behavior.
+	// https://docs.mongodb.com/manual/reference/method/cursor.limit/#zero-value
+	if q.Window != nil && q.Window.Limit == 0 {
+		return nil
+	}
+
+	qry, err := getQuery(q)
+	if err != nil {
+		return err
+	}
+
+	findOptions := options.Find()
+	findOptions.SetSort(getSort(q))
+	findOptions.SetProjection(getProjection(q))
+
+	c, err := m.c(ctx)
+	if err != nil {
+		return err
+	}
+	defer m.close(c)
+
+	if q.Window != nil {
+		findOptions = applyWindow(findOptions, *q.Window)
+	}
+
+	// Apply context deadline if any
+	if dl, ok := ctx.Deadline(); ok {
+		findOptions.SetMaxTime(time.Until(dl))
+	}
+
+	// Perform request
+	cursor, err := c.Find(ctx, qry, findOptions)
+	if err != nil {
+		return err
+	}
+
+	for cursor.Next(ctx) {
+		var mItem mongoItem
+		if err := cursor.Decode(&mItem); err != nil {
+			return err
+		}
+		// Check if context is still ok before to continue
+		if err = ctx.Err(); err != nil {
+			// TODO bench this as net/context is using mutex under the hood
+			cursor.Close(ctx)
+			return err
+		}
+		err = reducer(newItem(&mItem))
+		if err != nil {
+			return err
+		}
+	}
+
+	return cursor.Close(ctx)
+}
+
 // Count counts the number items matching the lookup filter
 func (m Handler) Count(ctx context.Context, query *query.Query) (int, error) {
 	q, err := getQuery(query)
